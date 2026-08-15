@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scaffold-name: Metal C++ (Apple silicon GPU)
-# scaffold-description: GPU programming with Apple's metal-cpp bindings — Makefile, shader build rules, and clangd/Zed flags.
+# scaffold-description: GPU programming with Apple's metal-cpp bindings — CMake, shader build rules, and clangd/Zed flags.
 # scaffold-default-name: my_metal_project
 #
 # Generates:
@@ -9,8 +9,8 @@
 #   ├── main.cpp                your application logic — device setup only
 #   ├── mtl_implementation.cpp  the single TU that emits the metal-cpp symbols
 #   ├── default.metal           empty shader file, wired into the build
-#   ├── Makefile                build + shader compilation + run + clean
-#   ├── compile_flags.txt       clangd/Zed include paths, so no phantom red lines
+#   ├── CMakeLists.txt          build + shader compilation + a 'run' target
+#   ├── compile_flags.txt       clangd/Zed fallback until the build dir exists
 #   ├── .gitignore
 #   └── README.md
 #
@@ -46,6 +46,12 @@ check_dep "clang++ (C++ compiler)" \
     "command -v clang++" \
     "xcode-select --install"
 
+check_dep "cmake" \
+    "command -v cmake" \
+    "brew install cmake"
+
+# CMake's default generator on macOS is Unix Makefiles, so make is still needed
+# unless you configure with -G Ninja.
 check_dep "make" \
     "command -v make" \
     "xcode-select --install"
@@ -60,8 +66,8 @@ check_dep "Metal shader compiler (xcrun metal)" \
     "xcrun -sdk macosx metal --version" \
     "xcodebuild -downloadComponent MetalToolchain   # needs full Xcode: xcode-select -s /Applications/Xcode.app"
 if [ "$DEP_OK" -eq 0 ]; then
-    log_hint "Without it, .metal files can't be precompiled into a .metallib."
-    log_hint "'make' skips that step with a note; the C++ side still builds and runs."
+    log_hint "Without it, .metal files can't be compiled into a .metallib. CMake"
+    log_hint "skips that step with a note; the C++ side still builds and runs."
 fi
 
 check_dep "curl (to download metal-cpp)" \
@@ -169,7 +175,9 @@ From the command line:
     unzip -q /tmp/metal-cpp.zip -d /tmp
     rm -rf metal-cpp && mv /tmp/metal-cpp .
 
-Then delete this file and run \`make run\`.
+Then delete this file and run:
+
+    cmake -S . -B build && cmake --build build --target run
 EOF
 fi
 
@@ -196,7 +204,7 @@ write_file "$TARGET_DIR/mtl_implementation.cpp" <<'EOF'
 EOF
 
 write_file "$TARGET_DIR/default.metal" <<'EOF'
-// default.metal — compiled into build/default.metallib by `make shaders`.
+// default.metal — compiled into default.metallib next to the binary.
 // Every *.metal file in this directory is picked up automatically.
 
 #include <metal_stdlib>
@@ -232,87 +240,133 @@ int main()
 }
 EOF
 
-# --------------------------------------------------------------- Makefile ---
+# ---------------------------------------------------------- CMakeLists ------
 
-write_file "$TARGET_DIR/Makefile" <<'EOF'
-# Makefile — __PROJECT_NAME__
+write_file "$TARGET_DIR/CMakeLists.txt" <<'EOF'
+cmake_minimum_required(VERSION 3.20)
+project(__PROJECT_NAME__ LANGUAGES CXX)
 
-TARGET   := __PROJECT_NAME__
-BUILD    := build
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
-CXX      := clang++
-METAL    := xcrun -sdk macosx metal
-METALLIB := xcrun -sdk macosx metallib
+# Feeds clangd (Zed, VS Code, nvim). Honoured by the Makefile and Ninja
+# generators; the Xcode generator ignores it, so configure a Ninja/Makefile
+# build dir too if you mainly work in Xcode.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-CXXFLAGS := -std=c++17 -O2 -Wall -Wextra -I. -Imetal-cpp
-LDFLAGS  := -framework Foundation -framework Metal -framework QuartzCore
+if(NOT APPLE)
+    message(FATAL_ERROR "Metal is macOS only.")
+endif()
 
-SRCS     := main.cpp mtl_implementation.cpp
-OBJS     := $(SRCS:%.cpp=$(BUILD)/%.o)
-DEPS     := $(OBJS:.o=.d)
+if(NOT EXISTS "${CMAKE_SOURCE_DIR}/metal-cpp/Metal/Metal.hpp")
+    message(FATAL_ERROR
+        "metal-cpp headers not found in ./metal-cpp — download them from "
+        "https://developer.apple.com/metal/cpp/ and extract them there (see README.md).")
+endif()
 
-SHADERS  := $(wildcard *.metal)
-AIRS     := $(SHADERS:%.metal=$(BUILD)/%.air)
-LIBRARY  := $(BUILD)/default.metallib
+# Header-only bindings. SYSTEM keeps -Wall/-Wextra from flagging Apple's headers.
+add_library(metal-cpp INTERFACE)
+target_include_directories(metal-cpp SYSTEM INTERFACE "${CMAKE_SOURCE_DIR}/metal-cpp")
 
-BIN      := $(BUILD)/$(TARGET)
+add_executable(${PROJECT_NAME}
+    main.cpp
+    mtl_implementation.cpp
+)
 
-# Fail early with a readable message instead of 400 lines of missing headers.
-ifneq ($(MAKECMDGOALS),clean)
-ifeq ($(wildcard metal-cpp/Metal/Metal.hpp),)
-$(error metal-cpp headers not found in ./metal-cpp — download them from https://developer.apple.com/metal/cpp/ and extract them there (see README.md))
-endif
-endif
+target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra)
 
-.PHONY: all run shaders clean help
+find_library(FOUNDATION_LIBRARY Foundation REQUIRED)
+find_library(METAL_LIBRARY Metal REQUIRED)
+find_library(QUARTZCORE_LIBRARY QuartzCore REQUIRED)
 
-all: $(BIN) shaders
+target_link_libraries(${PROJECT_NAME} PRIVATE
+    metal-cpp
+    ${FOUNDATION_LIBRARY}
+    ${METAL_LIBRARY}
+    ${QUARTZCORE_LIBRARY}
+)
 
-$(BIN): $(OBJS)
-	@mkdir -p $(BUILD)
-	$(CXX) $(OBJS) $(LDFLAGS) -o $@
+# ---------------------------------------------------------------- shaders ---
+# CMake has no native Metal support, so every *.metal is compiled to .air and
+# linked into one default.metallib by hand. The shader compiler ships with full
+# Xcode, not the command line tools — if it is missing, skip the step with a
+# note rather than failing the whole build.
 
-$(BUILD)/%.o: %.cpp
-	@mkdir -p $(BUILD)
-	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
+execute_process(
+    COMMAND xcrun -sdk macosx --find metal
+    OUTPUT_VARIABLE METAL_COMPILER
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE METAL_COMPILER_MISSING
+    ERROR_QUIET
+)
 
-# Shader compilation needs the Metal toolchain (full Xcode). If it is missing,
-# say so and carry on — main.cpp compiles the .metal source at runtime instead.
-shaders:
-	@if xcrun -sdk macosx metal --version >/dev/null 2>&1; then \
-		$(MAKE) --no-print-directory $(LIBRARY); \
-	else \
-		echo "note: Metal toolchain not installed — skipping precompiled shaders."; \
-		echo "      install: xcodebuild -downloadComponent MetalToolchain"; \
-	fi
+file(GLOB METAL_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/*.metal")
 
-$(LIBRARY): $(AIRS)
-	@mkdir -p $(BUILD)
-	$(METALLIB) $(AIRS) -o $@
+if(METAL_COMPILER_MISSING OR NOT METAL_SOURCES)
+    message(STATUS "Metal shader compiler not found — skipping .metallib.")
+    message(STATUS "  install: xcodebuild -downloadComponent MetalToolchain")
+else()
+    set(AIR_FILES "")
+    foreach(shader ${METAL_SOURCES})
+        get_filename_component(shader_name "${shader}" NAME_WE)
+        set(air "${CMAKE_CURRENT_BINARY_DIR}/${shader_name}.air")
+        add_custom_command(
+            OUTPUT "${air}"
+            COMMAND xcrun -sdk macosx metal -c "${shader}" -o "${air}"
+            DEPENDS "${shader}"
+            COMMENT "Compiling shader ${shader_name}.metal"
+            VERBATIM
+        )
+        list(APPEND AIR_FILES "${air}")
+    endforeach()
 
-$(BUILD)/%.air: %.metal
-	@mkdir -p $(BUILD)
-	$(METAL) -c $< -o $@
+    set(METALLIB "${CMAKE_CURRENT_BINARY_DIR}/default.metallib")
+    add_custom_command(
+        OUTPUT "${METALLIB}"
+        COMMAND xcrun -sdk macosx metallib ${AIR_FILES} -o "${METALLIB}"
+        DEPENDS ${AIR_FILES}
+        COMMENT "Linking default.metallib"
+        VERBATIM
+    )
+    add_custom_target(shaders DEPENDS "${METALLIB}")
+    add_dependencies(${PROJECT_NAME} shaders)
 
-run: all
-	@./$(BIN)
+    # Put it next to the executable, which is a different directory under the
+    # Xcode generator than under Ninja/Makefiles.
+    add_custom_command(
+        TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${METALLIB}" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/default.metallib"
+        VERBATIM
+    )
+endif()
 
-clean:
-	rm -rf $(BUILD)
+# Keep clangd happy without pointing it into build/: symlink the compilation
+# database next to the sources. Harmless if it is already there.
+if(CMAKE_EXPORT_COMPILE_COMMANDS AND NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
+    file(CREATE_LINK
+        "${CMAKE_BINARY_DIR}/compile_commands.json"
+        "${CMAKE_SOURCE_DIR}/compile_commands.json"
+        SYMBOLIC
+    )
+endif()
 
-help:
-	@echo "make          build the binary and the shader library"
-	@echo "make run      build, then run it"
-	@echo "make shaders  compile *.metal into $(LIBRARY)"
-	@echo "make clean    remove $(BUILD)/"
-
--include $(DEPS)
+# `cmake --build build --target run`
+add_custom_target(run
+    COMMAND "$<TARGET_FILE:${PROJECT_NAME}>"
+    DEPENDS ${PROJECT_NAME}
+    WORKING_DIRECTORY "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+    USES_TERMINAL
+)
 EOF
-sed -i '' "s/__PROJECT_NAME__/$PROJECT_NAME/g" "$TARGET_DIR/Makefile"
+sed -i '' "s/__PROJECT_NAME__/$PROJECT_NAME/g" "$TARGET_DIR/CMakeLists.txt"
 
 # ------------------------------------------------------ IDE / clangd flags ---
-# One argument per line. The sysroot is baked in from this machine's SDK so
-# Zed's clangd resolves the system headers instead of underlining them.
+# CMake writes a compile_commands.json and symlinks it into the project root,
+# and clangd prefers that. This file is the fallback for the window before the
+# build directory has been configured — one argument per line, with the sysroot
+# baked in from this machine's SDK.
 
 SDK_PATH="$(xcrun --show-sdk-path 2>/dev/null || true)"
 
@@ -334,6 +388,7 @@ log_add "compile_flags.txt"
 
 write_file "$TARGET_DIR/.gitignore" <<'EOF'
 build/
+build-*/
 *.air
 *.metallib
 *.o
@@ -341,6 +396,8 @@ build/
 .DS_Store
 .cache/
 compile_commands.json
+DerivedData/
+*.gputrace
 
 # metal-cpp is a third-party download; uncomment to keep it out of the repo.
 # metal-cpp/
@@ -361,25 +418,46 @@ $PROJECT_NAME/
 ├── main.cpp                your code — gets a device, nothing else
 ├── mtl_implementation.cpp  the one TU that emits metal-cpp's symbols
 ├── default.metal           empty; every *.metal here is built into the metallib
-├── Makefile
-└── compile_flags.txt       include paths for clangd (Zed, VS Code, nvim)
+├── CMakeLists.txt
+└── compile_flags.txt       clangd fallback until build/ has been configured
 \`\`\`
 
 ## Build
 
 \`\`\`sh
-make run
+cmake -S . -B build
+cmake --build build
+./build/$PROJECT_NAME
+
+# or in one step
+cmake --build build --target run
 \`\`\`
 
-\`make\` builds \`build/$PROJECT_NAME\` and, when the Metal shader compiler is
-installed, \`build/default.metallib\`. If it isn't, that step is skipped with a
-note and the C++ side still builds — load the library with
-\`device->newLibrary(NS::URL::fileURLWithPath(...), &error)\` once you have one.
+\`default.metallib\` is built next to the binary, so run from that directory or
+pass an absolute path when you load it. If the Metal shader compiler is not
+installed, CMake says so at configure time and skips the metallib; the C++ side
+still builds. Load it with
+\`device->newLibrary(NS::URL::fileURLWithPath(...), &error)\`.
+
+### Xcode (GPU frame capture, shader debugger)
+
+Needs full Xcode selected — with only the command line tools, CMake rejects the
+generator ("Xcode 1.5 not supported").
+
+\`\`\`sh
+sudo xcode-select -s /Applications/Xcode.app
+cmake -S . -B build-xcode -G Xcode
+open build-xcode/$PROJECT_NAME.xcodeproj
+\`\`\`
+
+Keep the regular \`build/\` dir around as well — the Xcode generator does not
+write \`compile_commands.json\`, so clangd needs the other one.
 
 ## Requirements
 
 | Tool | Install |
 | --- | --- |
+| CMake | \`brew install cmake\` |
 | Command line tools | \`xcode-select --install\` |
 | Metal shader compiler | \`xcodebuild -downloadComponent MetalToolchain\` (needs full Xcode) |
 | metal-cpp | download from $METAL_CPP_PAGE, extract into \`metal-cpp/\` |
@@ -394,8 +472,13 @@ note and the C++ side still builds — load the library with
 - An \`NS::Error*\` returned through an out-parameter is autoreleased too.
   Releasing it is an over-release and segfaults when the pool drains — a
   confusing crash, because it happens nowhere near the offending line.
-- \`compile_flags.txt\` points clangd at \`metal-cpp/\` and this machine's SDK.
-  If Zed still shows red lines, restart it after \`metal-cpp/\` is populated.
+- Configuring symlinks \`build/compile_commands.json\` into the project root,
+  which is what clangd actually uses. \`compile_flags.txt\` is only the fallback
+  for before you have configured — clangd prefers the compilation database when
+  both are present. Delete \`compile_flags.txt\` if you would rather not keep two
+  sources of flags.
+- If Zed still shows red lines, restart it after \`metal-cpp/\` is populated or
+  after the first configure.
 EOF
 
 # ============================================================== next steps ===
@@ -405,4 +488,5 @@ printf '  cd %s\n' "$TARGET_DIR"
 if [ ! -f "$TARGET_DIR/metal-cpp/Metal/Metal.hpp" ]; then
     printf '  %s# download metal-cpp first — see metal-cpp/PUT_METAL_CPP_HERE.md%s\n' "$C_YELLOW" "$C_RESET"
 fi
-printf '  make run\n'
+printf '  cmake -S . -B build\n'
+printf '  cmake --build build --target run\n'

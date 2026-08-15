@@ -41,20 +41,32 @@ my_metal_project/
 ├── metal-cpp/              Apple's C++ bindings, downloaded and extracted for you
 ├── main.cpp                autorelease pool + device, and a place to type
 ├── mtl_implementation.cpp  the single TU that emits metal-cpp's symbols
-├── default.metal           empty; the Makefile globs *.metal into one metallib
-├── Makefile                build, shaders, run, clean
-├── compile_flags.txt       clangd include paths + this machine's SDK, so Zed stops
-│                           underlining `<Metal/Metal.hpp>`
+├── default.metal           empty; CMake globs *.metal into one metallib
+├── CMakeLists.txt          build, shaders, and a `run` target
+├── compile_flags.txt       clangd fallback for before the first configure
 ├── .gitignore
 └── README.md
 ```
+
+```sh
+cmake -S . -B build
+cmake --build build --target run
+```
+
+Configuring symlinks `build/compile_commands.json` into the project root, which
+is what clangd (Zed, VS Code, nvim) actually reads — no hand-maintained flags to
+drift. `compile_flags.txt` is kept only as the fallback for before you've
+configured; clangd prefers the compilation database when both exist.
 
 It offers to download metal-cpp from Apple; decline (or lose the network) and
 you get a placeholder folder with the exact commands to do it by hand.
 
 The shader compiler (`xcrun metal`) ships with full Xcode, not the command line
-tools, so it's often missing. `make` detects that and skips the metallib step
-with a note instead of failing, so the C++ side still builds.
+tools, so it's often missing. CMake detects that at configure time and skips the
+metallib with a note instead of failing, so the C++ side still builds.
+
+For GPU frame capture and the shader debugger, `cmake -S . -B build-xcode -G
+Xcode` generates an Xcode project (needs full Xcode selected).
 
 ## Dependencies
 

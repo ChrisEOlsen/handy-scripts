@@ -7,7 +7,7 @@ matching script in `scaffolds/`, which writes the actual files.
 ```sh
 ./main.sh                                        # interactive menu
 ./main.sh metal-cpp                              # skip the menu
-./main.sh metal-cpp --name particles --dir ~/code --yes
+./main.sh llama-cpp --name chat --dir ~/code --yes
 ./main.sh --list
 ```
 
@@ -15,7 +15,6 @@ matching script in `scaffolds/`, which writes the actual files.
 | --- | --- |
 | `--name NAME` | project name, also the directory name |
 | `--dir DIR` | parent directory (default: cwd) |
-| `--no-git` | skip `git init` |
 | `-y, --yes` | accept every default, never prompt |
 | `-l, --list` | list scaffolds |
 
@@ -26,7 +25,8 @@ project-scaffolding/
 ├── main.sh              menu + the questions common to every scaffold
 ├── lib/common.sh        logging, prompts, dependency checks
 └── scaffolds/
-    └── metal-cpp.sh     one script per template
+    ├── llama-cpp.sh     one script per template
+    └── metal-cpp.sh
 ```
 
 ## Scaffolds
@@ -68,10 +68,57 @@ metallib with a note instead of failing, so the C++ side still builds.
 For GPU frame capture and the shader debugger, `cmake -S . -B build-xcode -G
 Xcode` generates an Xcode project (needs full Xcode selected).
 
+### `llama-cpp` — local LLM inference, linked as a library
+
+Generates a C++ project that builds against llama.cpp from source:
+
+```
+my_llama_project/
+├── vendor/llama.cpp/     pinned to a release tag, plain source checkout
+├── src/main.cpp          backend, model and context lifecycle — nothing else
+├── models/               GGUF files (gitignored)
+├── scripts/fetch-model.sh
+├── CMakeLists.txt        your target only
+├── CMakePresets.json     generator, build type, llama.cpp's options
+├── compile_flags.txt
+├── .gitignore
+└── README.md
+```
+
+```sh
+cmake --preset default     # Ninja + Release + Metal
+cmake --build build
+./build/<name> models/<model>.gguf
+```
+
+llama.cpp is pinned to a specific release tag rather than tracking a branch,
+because its C API renames and deprecates functions regularly — `src/main.cpp` is
+written against the tag it ships with. It is fetched with a shallow `git clone`
+and left at that; the generated README lists the ways to bring it under version
+control if you want to.
+
+Its build options live in `CMakePresets.json`, which keeps `CMakeLists.txt`
+about your code. Two are load-bearing: `BUILD_SHARED_LIBS=OFF`, because
+llama.cpp defaults to shared libraries and leaves dylibs to find at runtime for
+no benefit, and `GGML_METAL_EMBED_LIBRARY=ON`, which bakes ggml's Metal shader
+source into the binary and compiles it at runtime — so unlike the metal-cpp
+scaffold, this one needs no Xcode Metal toolchain.
+
+Ninja is the default generator here rather than make: llama.cpp is a few hundred
+translation units, and make builds one at a time unless told otherwise. A `make`
+preset is included for machines without ninja.
+
 ## Dependencies
 
 Scaffolds check what they need and **never install anything** — a missing tool
 is reported with the command that would fix it, and generation continues.
+
+## Version control
+
+Nothing here runs `git init`, `git add`, or `git commit`. Scaffolds write a
+`.gitignore` and stop — whether the result becomes a repository is your call.
+The one place git is used at all is fetching third-party source at a pinned tag
+(`llama-cpp`), which touches nothing outside the new project's `vendor/`.
 
 ## Adding a scaffold
 
@@ -90,7 +137,6 @@ comments — no edits to `main.sh`:
 | --- | --- |
 | `SCAFFOLD_PROJECT_NAME` | validated project name |
 | `SCAFFOLD_TARGET_DIR` | absolute path to the (created) project directory |
-| `SCAFFOLD_GIT_INIT` | `1` if `main.sh` will `git init` afterwards |
 | `SCAFFOLD_LIB_DIR` | source `$SCAFFOLD_LIB_DIR/common.sh` from here |
 | `SCAFFOLD_ASSUME_YES` | `1` when `--yes` was passed; prompts return defaults |
 

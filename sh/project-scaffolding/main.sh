@@ -2,8 +2,11 @@
 # main.sh — menu front-end for the project scaffolds.
 #
 # Collects the information every scaffold needs (which template, project name,
-# where to put it, whether to init git), then hands off to the matching script
-# in scaffolds/, which creates the actual files and folders.
+# where to put it), then hands off to the matching script in scaffolds/, which
+# creates the actual files and folders.
+#
+# Nothing here touches git. Scaffolds write a .gitignore and stop there — turning
+# the result into a repository, or not, is left to you.
 #
 # Usage:
 #   ./main.sh                         # interactive menu
@@ -36,7 +39,6 @@ ${C_BOLD}Usage${C_RESET}
 ${C_BOLD}Options${C_RESET}
   --name NAME     Project name (also the directory name)
   --dir DIR       Parent directory to create the project in (default: cwd)
-  --no-git        Skip 'git init'
   -y, --yes       Accept all defaults, never prompt
   -l, --list      List available scaffolds and exit
   -h, --help      Show this help
@@ -111,14 +113,12 @@ resolve_scaffold() {
 OPT_SCAFFOLD=""
 OPT_NAME=""
 OPT_DIR=""
-OPT_GIT=1
 
 while [ $# -gt 0 ]; do
     case "$1" in
         -h|--help) usage; exit 0 ;;
         -l|--list) discover_scaffolds; banner "Available scaffolds"; list_scaffolds; exit 0 ;;
         -y|--yes)  SCAFFOLD_ASSUME_YES=1 ;;
-        --no-git)  OPT_GIT=0 ;;
         --name)    shift; [ $# -gt 0 ] || die "--name needs a value"; OPT_NAME="$1" ;;
         --dir)     shift; [ $# -gt 0 ] || die "--dir needs a value"; OPT_DIR="$1" ;;
         --name=*)  OPT_NAME="${1#--name=}" ;;
@@ -204,26 +204,12 @@ if [ -e "$target_dir" ]; then
     fi
 fi
 
-git_init=0
-if [ "$OPT_GIT" -eq 1 ] && have_cmd git; then
-    if [ -d "$target_dir/.git" ]; then
-        log_info "Already a git repository — skipping 'git init'."
-    elif ask_yes_no "Initialize a git repository?" "y"; then
-        git_init=1
-    fi
-fi
-
 # ------------------------------------------------------------- handoff -----
 
 export SCAFFOLD_PROJECT_NAME="$project_name"
 export SCAFFOLD_TARGET_DIR="$target_dir"
-export SCAFFOLD_GIT_INIT="$git_init"
 export SCAFFOLD_LIB_DIR="$LIB_DIR"
 
 bash "$SELECTED_PATH" || die "Scaffold '$SELECTED_NAME' failed."
-
-if [ "$git_init" -eq 1 ]; then
-    git -C "$target_dir" init -q && log_ok "Initialized empty git repository."
-fi
 
 printf '\n%s %s\n' "${C_GREEN}${C_BOLD}Done.${C_RESET}" "Project created at ${C_BOLD}${target_dir}${C_RESET}"

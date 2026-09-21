@@ -20,7 +20,7 @@ GOVA_ENV_FILE="${GOVA_ENV_FILE:-$HOME/.gova-backup.env}"
 
 # rclone remote and prefix. `rclone config` creates the remote; the name here
 # must match. Everything lands under <remote>:<prefix>/<app>/…
-: "${GOVA_RCLONE_REMOTE:=gdrive}"
+: "${GOVA_RCLONE_REMOTE:=G-Drive}"
 : "${GOVA_RCLONE_PREFIX:=grfp-backups}"
 
 # The age RECIPIENT — a public key, safe to keep on the server.

@@ -37,9 +37,21 @@ git clone <this repo> ~/repos/handy-scripts
 Configure the Google Drive remote — this is interactive and needs a browser:
 
 ```sh
-rclone config          # name it: gdrive
-rclone lsd gdrive:     # confirm it works
+rclone config            # name it: G-Drive
+rclone lsd G-Drive:      # confirm it works
 ```
+
+The server already has a `G-Drive:` remote. If its token has expired —
+`couldn't fetch token - maybe it has expired?` — reconnect rather than
+recreate:
+
+```sh
+rclone config reconnect G-Drive:
+```
+
+On a headless server answer **N** to "Use auto config?". rclone then prints an
+`rclone authorize "drive"` command to run on a machine with a browser; paste
+the resulting token back.
 
 Generate the encryption keypair. **Do this on your laptop, not the server:**
 

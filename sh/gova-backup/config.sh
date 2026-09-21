@@ -4,6 +4,14 @@
 # Override any of these in the environment rather than editing this file, so a
 # `git pull` on the server never clobbers local settings.
 
+# Settings live here rather than in a shell profile because cron does not read
+# one: a cron job gets a near-empty environment, so an `export` in ~/.profile is
+# invisible to it and GOVA_AGE_RECIPIENT would arrive empty every night. This
+# file is not in git, so a `git pull` on the server cannot clobber it.
+GOVA_ENV_FILE="${GOVA_ENV_FILE:-$HOME/.gova-backup.env}"
+# shellcheck source=/dev/null
+[ -f "$GOVA_ENV_FILE" ] && . "$GOVA_ENV_FILE"
+
 # The apps to back up, as "name:path-to-repo". Each repo's live database is at
 # <repo>/data/app.db — that path is the docker bind mount from
 # docker-compose.yml, so the host can read it directly while the container

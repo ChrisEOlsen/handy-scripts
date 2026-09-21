@@ -48,17 +48,33 @@ age-keygen -o grfp-backup.key
 # public key: age1xxxxxxxx...
 ```
 
-Put the **public** key on the server:
+Put the **public** key on the server, in `~/.gova-backup.env`:
 
 ```sh
-echo 'export GOVA_AGE_RECIPIENT=age1xxxxxxxx...' >> ~/.profile
+cat > ~/.gova-backup.env <<'ENV'
+GOVA_AGE_RECIPIENT=age1xxxxxxxx...
+ENV
+chmod 600 ~/.gova-backup.env
 ```
+
+Not `~/.profile`. **Cron does not read a shell profile** — a cron job starts
+with a near-empty environment, so an `export` there is invisible to it and the
+nightly run would fail with an empty recipient. `config.sh` sources
+`~/.gova-backup.env` itself, which works the same from cron and from a login
+shell. It is outside the repo, so `git pull` cannot overwrite it.
 
 Schedule it:
 
 ```sh
 crontab -e
 15 3 * * *  /home/chris/repos/handy-scripts/sh/gova-backup/backup.sh >> /var/log/gova-backup.log 2>&1
+```
+
+Then prove cron itself works before trusting it — run the line by hand with a
+stripped environment, which is what cron will actually give it:
+
+```sh
+env -i HOME="$HOME" PATH=/usr/bin:/bin /home/chris/repos/handy-scripts/sh/gova-backup/backup.sh
 ```
 
 ## Key custody — read this

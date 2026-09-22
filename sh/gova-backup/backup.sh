@@ -2,6 +2,11 @@
 #
 # Nightly backup of every GOVA app database on this server.
 #
+# NOT the normal path any more. Each app runs a `backup` service in its own
+# docker-compose.yml, so deploying the app deploys its backups. This is the
+# fallback for a host with no compose stack — keep it working, but do not run
+# it alongside the containers or both will write the same object.
+#
 # For each app:  snapshot -> integrity check -> encrypt -> upload -> rotate.
 #
 # Why not rsync the file
@@ -88,7 +93,7 @@ while read -r entry; do
     fi
     rm -f "$snapshot"
 
-    remote_daily="$GOVA_RCLONE_REMOTE:$GOVA_RCLONE_PREFIX/$app/daily"
+    remote_daily="$(gova_remote_base)/$app/daily"
     if ! rclone copy "$encrypted" "$remote_daily/" --no-traverse; then
         echo "ERROR: upload failed for $app" >&2
         failures=$((failures + 1))
@@ -99,7 +104,7 @@ while read -r entry; do
     # The first of the month is kept forever, in its own prefix so the daily
     # rotation below cannot reach it.
     if [ "$day_of_month" = "01" ]; then
-        remote_monthly="$GOVA_RCLONE_REMOTE:$GOVA_RCLONE_PREFIX/$app/monthly"
+        remote_monthly="$(gova_remote_base)/$app/monthly"
         rclone copy "$encrypted" "$remote_monthly/" --no-traverse \
             && log "$app: kept as monthly"
     fi

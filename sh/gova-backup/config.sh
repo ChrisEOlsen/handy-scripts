@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 #
-# Shared configuration. Sourced by backup.sh, restore.sh and verify-restore.sh.
+# Shared configuration. Sourced by restore.sh and verify-restore.sh.
+#
+# Taking a backup is no longer done from here: each app runs a `backup` service
+# in its own docker-compose.yml, so deploying the app deploys its backups. This
+# directory is the RESTORE side, which stays on the host and stays manual —
+# swapping a live database needs the app stopped, and a container can only stop
+# its sibling if it is handed the Docker socket. backup.sh is kept for a host
+# that has no compose stack.
 # Override any of these in the environment rather than editing this file, so a
 # `git pull` on the server never clobbers local settings.
 
@@ -18,10 +25,40 @@ GOVA_ENV_FILE="${GOVA_ENV_FILE:-$HOME/.gova-backup.env}"
 # writes to it. WAL mode makes that safe for a reader.
 : "${GOVA_APPS:=grassroots-client-tracking:$HOME/repos/grassroots-client-tracking grfp-ws-lift-tracker:$HOME/repos/grfp-ws-lift-tracker}"
 
-# rclone remote and prefix. `rclone config` creates the remote; the name here
-# must match. Everything lands under <remote>:<prefix>/<app>/…
-: "${GOVA_RCLONE_REMOTE:=G-Drive}"
-: "${GOVA_RCLONE_PREFIX:=backups}"
+# rclone remote, bucket, and an optional folder inside it. Everything lands
+# under <remote>:<bucket>[/<prefix>]/<app>/…
+: "${GOVA_RCLONE_REMOTE:=r2}"
+
+# REQUIRED, and separate from any folder. With an s3 backend the first path
+# segment of remote:path IS the bucket — not a directory the way it is on
+# Google Drive. Folding the two together is how the backup first ran against a
+# bucket literally named "backups" and answered 403 on every upload, which
+# reads exactly like a bad credential.
+: "${GOVA_BACKUP_BUCKET:=}"
+
+# R2 credentials, for restore and the verify drill. rclone reads a remote
+# entirely from RCLONE_CONFIG_<NAME>_* variables, so there is no rclone.conf on
+# this machine either — the same values the apps' .env files already hold.
+: "${RCLONE_CONFIG_R2_TYPE:=s3}"
+: "${RCLONE_CONFIG_R2_PROVIDER:=Cloudflare}"
+: "${RCLONE_CONFIG_R2_REGION:=auto}"
+export RCLONE_CONFIG_R2_TYPE RCLONE_CONFIG_R2_PROVIDER RCLONE_CONFIG_R2_REGION
+export RCLONE_CONFIG_R2_ACCESS_KEY_ID RCLONE_CONFIG_R2_SECRET_ACCESS_KEY RCLONE_CONFIG_R2_ENDPOINT
+# Optional folder inside the bucket. Empty means each app's folder sits at the
+# bucket root, which is what the backup service writes by default.
+: "${GOVA_RCLONE_PREFIX:=}"
+
+# The <remote>:<bucket>[/<prefix>] base every path is built from. Assembled
+# rather than interpolated so an empty prefix does not leave a doubled slash,
+# which R2 treats as a real, differently named key.
+gova_remote_base() {
+    [ -n "$GOVA_BACKUP_BUCKET" ] || die "GOVA_BACKUP_BUCKET is not set. See README.md."
+    if [ -n "$GOVA_RCLONE_PREFIX" ]; then
+        echo "$GOVA_RCLONE_REMOTE:$GOVA_BACKUP_BUCKET/$GOVA_RCLONE_PREFIX"
+    else
+        echo "$GOVA_RCLONE_REMOTE:$GOVA_BACKUP_BUCKET"
+    fi
+}
 
 # The age RECIPIENT — a public key, safe to keep on the server.
 #

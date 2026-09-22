@@ -34,10 +34,11 @@ if [ "$1" = "--list" ]; then
     [ $# -eq 2 ] || usage
     app="$2"
     require_tools rclone
+    base="$(gova_remote_base)"
     echo "daily:"
-    rclone lsf "$GOVA_RCLONE_REMOTE:$GOVA_RCLONE_PREFIX/$app/daily" 2>/dev/null | sort || true
+    rclone lsf "$base/$app/daily" 2>/dev/null | sort || true
     echo "monthly:"
-    rclone lsf "$GOVA_RCLONE_REMOTE:$GOVA_RCLONE_PREFIX/$app/monthly" 2>/dev/null | sort || true
+    rclone lsf "$base/$app/monthly" 2>/dev/null | sort || true
     exit 0
 fi
 
@@ -65,7 +66,7 @@ cleanup() { rm -rf "$work"; }
 trap cleanup EXIT
 mkdir -p "$work"
 
-remote_base="$GOVA_RCLONE_REMOTE:$GOVA_RCLONE_PREFIX/$app"
+remote_base="$(gova_remote_base)/$app"
 
 if [ "$when" = "latest" ]; then
     name="$(rclone lsf "$remote_base/daily" 2>/dev/null | sort | tail -1)"

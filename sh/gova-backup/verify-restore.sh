@@ -39,7 +39,7 @@ cleanup() { rm -rf "$work"; }
 trap cleanup EXIT
 mkdir -p "$work"
 
-remote="$GOVA_RCLONE_REMOTE:$GOVA_RCLONE_PREFIX/$app/daily"
+remote="$(gova_remote_base)/$app/daily"
 name="$(rclone lsf "$remote" 2>/dev/null | sort | tail -1)"
 [ -n "$name" ] || die "no backups found at $remote"
 
